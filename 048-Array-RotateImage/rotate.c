@@ -2,6 +2,13 @@
 #include <stdlib.h>
 #include <string.h>
 
+typedef struct Matrix
+{
+	int **content;
+	int width;
+	int height;
+} Matrix;
+
 // From: https://github.com/SrVariable/AdventOfCode2024/blob/85867edb618cf433ac4a8c90c6b346159e9797e4/day6/main.c#L28C1-L62C2
 void	free_double_pointer(void **ptr)
 {
@@ -93,41 +100,6 @@ char	*read_entire_file(char *filename)
 	return content;
 }
 
-void	rotate_2(int **matrix, int width, int height)
-{
-	printf("Not implemented yet\n");
-}
-
-// My solution for: https://leetcode.com/problems/rotate-image/description/?envType=problem-list-v2&envId=array
-// Slightly modified
-void rotate(int **matrix, int width, int height) {
-	if (width != height)
-	{
-		return rotate_2(matrix, width, height);
-	}
-	for (int i = 0; i < height; ++i)
-	{
-		for (int j = 0; j < width; ++j)
-		{
-			if (i < j) break;
-			int temp = matrix[i][j];
-			matrix[i][j] = matrix[j][i];
-			matrix[j][i] = temp;
-		}
-	}
-
-	for (int i = 0; i < height; ++i)
-	{
-		for (int j = 0; j < width; ++j)
-		{
-			if (j >= width / 2) break;
-			int temp = matrix[i][j];
-			matrix[i][j] = matrix[i][width - 1 - j];
-			matrix[i][width - 1 - j] = temp;
-		}
-	}
-}
-
 // Format: https://en.wikipedia.org/wiki/X_PixMap
 void	generate_xpm(const char *file, int **matrix, int width, int height)
 {
@@ -160,6 +132,38 @@ void	free_matrix(int **m, int size)
 	free(m);
 }
 
+void	get_matrix_size(char **s, int *width, int *height)
+{
+	*width = strlen(s[0]);
+	for (int i = 0; s[i]; ++i)
+	{
+		(*height)++;
+	}
+}
+
+int	**extract_matrix(char **s, int width, int height)
+{
+	int **matrix = malloc(sizeof(*matrix) * height);
+	if (!matrix)
+	{
+		return NULL;
+	}
+	for (int i = 0; i < height; ++i)
+	{
+		matrix[i] = malloc(sizeof(**matrix) * width);
+		if (!matrix[i])
+		{
+			free_matrix(matrix, i);
+			return NULL;
+		}
+		for (int j = 0; s[i][j]; ++j)
+		{
+			matrix[i][j] = s[i][j] - '0';
+		}
+	}
+	return matrix;
+}
+
 // NOTE: Assuming there's an empty line before the image
 int	get_matrix_index(char **s)
 {
@@ -172,36 +176,114 @@ int	get_matrix_index(char **s)
 	return i;
 }
 
-void	get_matrix_size(char **s, int *width, int *height)
+Matrix get_matrix_from_xpm(char *infile)
 {
-	*width = strlen(s[0]);
-	for (int i = 0; s[i]; ++i)
+	Matrix matrix = {0};
+	char *content = read_entire_file(infile);
+	if (!content)
 	{
-		(*height)++;
+		return matrix;
+	}
+
+	char **s = split(content, '\n');
+	free(content);
+	if (!s)
+	{
+		return matrix;
+	}
+
+	int startIndex = get_matrix_index(s);
+	get_matrix_size(&s[startIndex], &matrix.width, &matrix.height);
+	matrix.content = extract_matrix(&s[startIndex], matrix.width, matrix.height);
+	free_double_pointer((void **)s);
+
+	return matrix;
+}
+
+void	print_matrix(Matrix *matrix)
+{
+	for (int i = 0; i < matrix->height; ++i)
+	{
+		for (int j = 0; j < matrix->width; ++j)
+		{
+			printf("%d ", matrix->content[i][j]);
+		}
+		printf("\n");
 	}
 }
 
-int	**extract_matrix(char **s, int width, int height)
+Matrix	*reverse_matrix(Matrix *matrix)
 {
-	int **m = malloc(sizeof(*m) * height);
-	if (!m)
+	for (int i = 0; i < matrix->height; ++i)
 	{
-		return NULL;
-	}
-	for (int i = 0; i < height; ++i)
-	{
-		m[i] = malloc(sizeof(**m) * width);
-		if (!m[i])
+		for (int j = 0; j < matrix->width / 2; ++j)
 		{
-			free_matrix(m, i);
-			return NULL;
-		}
-		for (int j = 0; s[i][j]; ++j)
-		{
-			m[i][j] = s[i][j] - '0';
+			int temp = matrix->content[i][j];
+			matrix->content[i][j] = matrix->content[i][matrix->width - 1 - j];
+			matrix->content[i][matrix->width - 1 - j] = temp;
 		}
 	}
-	return m;
+	return matrix;
+}
+
+void	rotate_different_size(Matrix *matrix)
+{
+	Matrix transpose = {0};
+
+	transpose.width = matrix->height;
+	transpose.height = matrix->width;
+	transpose.content = malloc(sizeof(*transpose.content) * transpose.height);
+	if (!transpose.content)
+	{
+		return;
+	}
+
+	for (int i = 0; i < transpose.height; ++i)
+	{
+		transpose.content[i] = malloc(sizeof(**transpose.content) * transpose.width);
+		if (!transpose.content)
+		{
+			free_matrix(transpose.content, transpose.height);
+			transpose.content = NULL;
+			return;
+		}
+		for (int j = 0; j < transpose.width; ++j)
+		{
+			transpose.content[i][j] = matrix->content[j][i];
+		}
+	}
+
+	transpose = *reverse_matrix(&transpose);
+	free_matrix(matrix->content, matrix->height);
+	matrix->content = transpose.content;
+	matrix->width = transpose.width;
+	matrix->height = transpose.height;
+}
+
+void	rotate_same_size(Matrix *matrix)
+{
+	for (int i = 0; i < matrix->height; ++i)
+	{
+		for (int j = 0; j < i; ++j)
+		{
+			int temp = matrix->content[i][j];
+			matrix->content[i][j] = matrix->content[j][i];
+			matrix->content[j][i] = temp;
+		}
+	}
+
+	matrix = reverse_matrix(matrix);
+}
+
+// My solution for: https://leetcode.com/problems/rotate-image/description/?envType=problem-list-v2&envId=array
+// Slightly modified
+void rotate(Matrix *matrix) {
+	if (matrix->width != matrix->height)
+	{
+		return rotate_different_size(matrix);
+	}
+
+	return rotate_same_size(matrix);
 }
 
 int	main(int argc, char **argv)
@@ -211,38 +293,18 @@ int	main(int argc, char **argv)
 		printf("Usage: %s <infile> <outfile>\n", argv[0]);
 		return 1;
 	}
-
 	char *infile = argv[1];
 	char *outfile = argv[2];
 
-	char *content = read_entire_file(infile);
-	if (!content)
+	Matrix matrix = get_matrix_from_xpm(infile);
+	if (!matrix.content)
 	{
 		return 1;
 	}
 
-	char **s = split(content, '\n');
-	free(content);
-	if (!s)
-	{
-		return 1;
-	}
+	rotate(&matrix);
+	generate_xpm(outfile, matrix.content, matrix.width, matrix.height);
+	free_matrix(matrix.content, matrix.height);
 
-	int width = 0;
-	int height = 0;
-	int startIndex = get_matrix_index(s);
-	get_matrix_size(&s[startIndex], &width, &height);
-	int **matrix = extract_matrix(&s[startIndex], width, height);
-	free_double_pointer((void **)s);
-	if (!matrix)
-	{
-		return 1;
-	}
-
-	int matrixCol;
-	rotate(matrix, width, height);
-	generate_xpm(outfile, matrix, width, height);
-
-	free_matrix(matrix, height);
 	return 0;
 }
