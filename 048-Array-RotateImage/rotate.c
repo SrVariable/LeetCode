@@ -1,6 +1,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <regex.h>
+#include <stdbool.h>
 
 typedef struct Matrix
 {
@@ -8,6 +10,13 @@ typedef struct Matrix
 	int width;
 	int height;
 } Matrix;
+
+// TODO: Create another struct XPM_Header, to facilitate generating new XPM files
+typedef struct XPM
+{
+	char **header;
+	char **matrix;
+} XPM;
 
 // From: https://github.com/SrVariable/AdventOfCode2024/blob/85867edb618cf433ac4a8c90c6b346159e9797e4/day6/main.c#L28C1-L62C2
 void	free_double_pointer(void **ptr)
@@ -29,6 +38,7 @@ int	count_lines(const char *line)
 			++count;
 		}
 	}
+
 	return count;
 }
 
@@ -53,24 +63,14 @@ char **split(const char *line, char delim)
 		offset += line_len + 1;
 	}
 	lines[n_lines] = NULL;
+
 	return lines;
 }
 
-int split_len(char **s)
-{
-	int i = 0;
-
-	while (s[i])
-	{
-		++i;
-	}
-	return i;
-}
-
 // From: https://github.com/SrVariable/funca/blob/617e8fb2f1794f43f1fdc1eab7d750500cb2a73c/funca.c#L152
-char	*read_entire_file(char *filename)
+char	*read_entire_file(const char *filename)
 {
-	FILE *f = fopen(filename, "r");
+	FILE *f = fopen(filename, "rb");
 	if (!f)
 	{
 		return NULL;
@@ -101,22 +101,21 @@ char	*read_entire_file(char *filename)
 }
 
 // Format: https://en.wikipedia.org/wiki/X_PixMap
-void	generate_xpm(const char *file, int **matrix, int width, int height)
+void	generate_xpm(const char *filename, char **xpm_header, Matrix *matrix)
 {
 	FILE * out;
-	out = fopen(file, "wb");
-	fprintf(out, "! XPM2\n");
-	fprintf(out, "%d %d 4 1\n", width, height);
-	fprintf(out, "0 c #FFFFFF\n");
-	fprintf(out, "1 c #FF0000\n");
-	fprintf(out, "2 c #00FF00\n");
-	fprintf(out, "3 c #0000FF\n");
-	fprintf(out, "\n");
-	for (int i = 0; i < height; ++i)
+
+	out = fopen(filename, "wb");
+	for (int i = 0; xpm_header[i]; ++i)
 	{
-		for (int j = 0; j < width; ++j)
+		fprintf(out, "%s\n", xpm_header[i]);
+	}
+	fprintf(out, "\n");
+	for (int i = 0; i < matrix->height; ++i)
+	{
+		for (int j = 0; j < matrix->width; ++j)
 		{
-			fprintf(out, "%d", matrix[i][j]);
+			fprintf(out, "%c", matrix->content[i][j]);
 		}
 		fprintf(out, "\n");
 	}
@@ -158,58 +157,11 @@ int	**extract_matrix(char **s, int width, int height)
 		}
 		for (int j = 0; s[i][j]; ++j)
 		{
-			matrix[i][j] = s[i][j] - '0';
+			matrix[i][j] = s[i][j];
 		}
 	}
-	return matrix;
-}
-
-// NOTE: Assuming there's an empty line before the image
-int	get_matrix_index(char **s)
-{
-	int i = 0;
-	while (s[i] && s[i][0])
-	{
-		++i;
-	}
-	++i;
-	return i;
-}
-
-Matrix get_matrix_from_xpm(char *infile)
-{
-	Matrix matrix = {0};
-	char *content = read_entire_file(infile);
-	if (!content)
-	{
-		return matrix;
-	}
-
-	char **s = split(content, '\n');
-	free(content);
-	if (!s)
-	{
-		return matrix;
-	}
-
-	int startIndex = get_matrix_index(s);
-	get_matrix_size(&s[startIndex], &matrix.width, &matrix.height);
-	matrix.content = extract_matrix(&s[startIndex], matrix.width, matrix.height);
-	free_double_pointer((void **)s);
 
 	return matrix;
-}
-
-void	print_matrix(Matrix *matrix)
-{
-	for (int i = 0; i < matrix->height; ++i)
-	{
-		for (int j = 0; j < matrix->width; ++j)
-		{
-			printf("%d ", matrix->content[i][j]);
-		}
-		printf("\n");
-	}
 }
 
 Matrix	*reverse_matrix(Matrix *matrix)
@@ -223,6 +175,7 @@ Matrix	*reverse_matrix(Matrix *matrix)
 			matrix->content[i][matrix->width - 1 - j] = temp;
 		}
 	}
+
 	return matrix;
 }
 
@@ -277,13 +230,133 @@ void	rotate_same_size(Matrix *matrix)
 
 // My solution for: https://leetcode.com/problems/rotate-image/description/?envType=problem-list-v2&envId=array
 // Slightly modified
-void rotate(Matrix *matrix) {
+void rotate(Matrix *matrix)
+{
 	if (matrix->width != matrix->height)
 	{
 		return rotate_different_size(matrix);
 	}
 
 	return rotate_same_size(matrix);
+}
+
+char **splitndup(char **s, size_t n)
+{
+	char **new = malloc(sizeof(*new) * (n + 1));
+	if (!new)
+	{
+		return NULL;
+	}
+	new[n] = NULL;
+
+	for (size_t i = 0; i < n && s[i]; ++i)
+	{
+		new[i] = strdup(s[i]);
+		if (!new[i])
+		{
+			free_double_pointer((void **)new);
+			return NULL;
+		}
+	}
+
+	return new;
+}
+
+int	get_xpm_header_end_index(char **s)
+{
+	regex_t reg;
+	bool found = false;
+
+	if (regcomp(&reg, ". c #[0-9|A-F|a-f]{6}$", REG_EXTENDED) != 0)
+	{
+		return -1;
+	}
+	int i = 0;
+	for (; s[i]; ++i)
+	{
+		if (regexec(&reg, s[i], 0, NULL, 0) == 0)
+		{
+			found = true;
+		}
+		else
+		{
+			if (found)
+			{
+				break;
+			}
+		}
+	}
+	regfree(&reg);
+
+	return i;
+}
+
+char **get_xpm_header(char **s)
+{
+	return splitndup(s, get_xpm_header_end_index(s));
+}
+
+void	update_xpm_header_size(char **header, Matrix *matrix)
+{
+	char buf[64] = {0};
+
+	char **s = split(header[1], ' ');
+	if (!s)
+	{
+		return;
+	}
+	snprintf(buf, sizeof(buf), "%d %d ", matrix->width, matrix->height);
+	memcpy(header[1], buf, strlen(buf));
+	free_double_pointer((void **)s);
+}
+
+char **get_xpm_matrix(char **s)
+{
+	int start = get_xpm_header_end_index(s);
+
+	while (s && s[start] && !s[start][0])
+	{
+		++start;
+	}
+	int end = 0;
+	while (s && s[start + end])
+	{
+		++end;
+	}
+
+	return splitndup(&s[start], end);
+}
+
+XPM get_xpm(const char *filename)
+{
+	XPM xpm = {0};
+
+	char *content = read_entire_file(filename);
+	if (!content)
+	{
+		return xpm;
+	}
+	char **s = split(content, '\n');
+	free(content);
+	if (!s)
+	{
+		return xpm;
+	}
+	xpm.header = get_xpm_header(s);
+	xpm.matrix = get_xpm_matrix(s);
+	free_double_pointer((void **)s);
+	if (!xpm.matrix)
+	{
+		free_double_pointer((void **)xpm.header);
+	}
+
+	return xpm;
+}
+
+void	free_xpm(XPM *xpm)
+{
+	free_double_pointer((void **)xpm->header);
+	free_double_pointer((void **)xpm->matrix);
 }
 
 int	main(int argc, char **argv)
@@ -295,16 +368,23 @@ int	main(int argc, char **argv)
 	}
 	char *infile = argv[1];
 	char *outfile = argv[2];
-
-	Matrix matrix = get_matrix_from_xpm(infile);
-	if (!matrix.content)
+	XPM xpm = get_xpm(infile);
+	if (!xpm.header || !xpm.matrix)
 	{
 		return 1;
 	}
-
+	Matrix matrix = {0};
+	get_matrix_size(xpm.matrix, &matrix.width, &matrix.height);
+	matrix.content = extract_matrix(xpm.matrix, matrix.width, matrix.height);
+	if (!matrix.content)
+	{
+		free_xpm(&xpm);
+		return (1);
+	}
 	rotate(&matrix);
-	generate_xpm(outfile, matrix.content, matrix.width, matrix.height);
+	update_xpm_header_size(xpm.header, &matrix);
+	generate_xpm(outfile, xpm.header, &matrix);
 	free_matrix(matrix.content, matrix.height);
-
+	free_xpm(&xpm);
 	return 0;
 }
